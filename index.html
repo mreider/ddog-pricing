@@ -146,11 +146,6 @@
           <span class="sb-cost" id="cost-logs">$0</span>
         </div>
         <div class="sb-product">
-          <input type="checkbox" id="dd-containers" checked onchange="recalculate()">
-          <span class="sb-pname">Containers</span>
-          <span class="sb-cost" id="cost-containers">$0</span>
-        </div>
-        <div class="sb-product">
           <input type="checkbox" id="dd-metrics" checked onchange="recalculate()">
           <span class="sb-pname">Custom Metrics</span>
           <span class="sb-cost" id="cost-metrics">$0</span>
@@ -189,6 +184,37 @@
           </select>
           <span class="sb-cost" id="cost-security">-</span>
         </div>
+        <div class="sb-product">
+          <input type="checkbox" id="dd-errors" onchange="recalculate()">
+          <span class="sb-pname">Error Tracking</span>
+          <span class="sb-cost" id="cost-errorTracking">-</span>
+        </div>
+        <div class="sb-product">
+          <input type="checkbox" id="dd-csiem" onchange="recalculate()">
+          <span class="sb-pname">Cloud SIEM</span>
+          <span class="sb-cost" id="cost-csiem">-</span>
+        </div>
+        <div class="sb-product">
+          <input type="checkbox" id="dd-civis" onchange="toggleCivisDetail(); recalculate()">
+          <span class="sb-pname">CI Visibility</span>
+          <span class="sb-cost" id="cost-civis">-</span>
+        </div>
+        <div class="sb-detail" id="civis-detail" style="display:none">
+          <label>Committers <input type="number" id="dd-civis-committers" value="0" min="0" step="5" onchange="recalculate()" oninput="recalculate()"></label>
+        </div>
+        <div class="sb-product">
+          <input type="checkbox" id="dd-incidents" onchange="toggleIncidentsDetail(); recalculate()">
+          <span class="sb-pname">Incident Mgmt</span>
+          <span class="sb-cost" id="cost-incidents">-</span>
+        </div>
+        <div class="sb-detail" id="incidents-detail" style="display:none">
+          <label>On-Call Seats <input type="number" id="dd-incidents-seats" value="0" min="0" step="1" onchange="recalculate()" oninput="recalculate()"></label>
+        </div>
+        <div class="sb-product">
+          <input type="checkbox" id="dd-usm" onchange="recalculate()">
+          <span class="sb-pname">Universal Svc Mon</span>
+          <span class="sb-cost" id="cost-usm">-</span>
+        </div>
       </div>
 
       <div class="sb-section">
@@ -198,8 +224,6 @@
       <div class="sb-section sb-infra">
         <h5>Derived Dimensions</h5>
         <div class="sb-row"><span>Hosts</span><span id="sb-hosts">0</span></div>
-        <div class="sb-row"><span>Containers</span><span id="sb-containers">0</span></div>
-        <div class="sb-row"><span>Container Overage</span><span id="sb-container-over">0</span></div>
         <div class="sb-row"><span>Logs</span><span id="sb-logs">0 GB/day</span></div>
         <div class="sb-row"><span>Log Events</span><span id="sb-events">0M/mo</span></div>
         <div class="sb-row"><span>Custom Metrics</span><span id="sb-metrics">0</span></div>

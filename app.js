@@ -20,7 +20,19 @@ const PRICING = {
   rum: { sessionsPer1K: { annual: 0.80, onDemand: 1.20 }, replayPer1K: { annual: 2.50, onDemand: 3.60 } },
   dbm: { perHost: { annual: 70, onDemand: 84 } },
   network: { cloudPerHost: { annual: 5, onDemand: 7.20 } },
-  security: { pro: { annual: 10, onDemand: 12 }, enterprise: { annual: 25, onDemand: 30 } }
+  security: { pro: { annual: 10, onDemand: 12 }, enterprise: { annual: 25, onDemand: 30 } },
+  errorTracking: {
+    base: { annual: 25, onDemand: 36 }, // flat fee for first 50K
+    tiers: [ // per 1K errors above 50K
+      { max: 100000, annual: 0.25, onDemand: 0.38 },
+      { max: 500000, annual: 0.21, onDemand: 0.32 },
+      { max: 10000000, annual: 0.17, onDemand: 0.26 },
+    ]
+  },
+  csiem: { perMEvents: { annual: 5, onDemand: 7.50 } },
+  ciVisibility: { perCommitter: { annual: 8, onDemand: 12 } },
+  incidents: { perSeat: { annual: 20, onDemand: 29 } },
+  usm: { perHost: { annual: 9, onDemand: 13 } }
 };
 
 // ============================================================
@@ -51,9 +63,10 @@ const LOG_SIZE_KB = { java: 1.5, nodejs: 1.0, go: 0.7, python: 1.2 };
 
 const TEAM_COLORS = ['#632CA6','#2563EB','#059669','#D97706','#DC2626','#7C3AED','#0891B2','#EA580C'];
 const PRODUCT_NAMES = {
-  infra:'Infrastructure', apm:'APM', logs:'Log Management', containers:'Containers',
+  infra:'Infrastructure', apm:'APM', logs:'Log Management',
   metrics:'Custom Metrics', synthetics:'Synthetics', rum:'RUM', dbm:'Database Mon',
-  network:'Network', security:'Security'
+  network:'Network', security:'Security', errorTracking:'Error Tracking',
+  csiem:'Cloud SIEM', civis:'CI Visibility', incidents:'Incident Mgmt', usm:'Universal Svc Mon'
 };
 
 // ============================================================
@@ -556,10 +569,6 @@ function calculateCosts() {
     c.logs = dims.logGBPerMonth * PRICING.logs.ingestionPerGB + (dims.logEventsPerMonth / 1e6) * indexPrice;
   } else c.logs = 0;
 
-  if (chk('dd-containers')) {
-    c.containers = dims.containerOverage * PRICING.containers.prepaid;
-  } else c.containers = 0;
-
   if (chk('dd-metrics')) {
     c.metrics = Math.ceil(dims.metricOverage / 100) * PRICING.customMetrics.per100;
   } else c.metrics = 0;
@@ -595,6 +604,43 @@ function calculateCosts() {
     c.security = dims.hosts * price(PRICING.security[$('dd-security-tier').value]);
   } else c.security = 0;
 
+  if (chk('dd-errors')) {
+    // Error rate ~2% of requests, estimate errors from total traffic
+    const totalRPS = dims.serviceDetails.filter(s => s.type === 'http').reduce((sum, s) => sum + (s.traffic_rps || 0), 0);
+    const errorsPerMonth = totalRPS * 0.02 * 86400 * 30;
+    dims._errorsPerMonth = errorsPerMonth;
+    c.errorTracking = price(PRICING.errorTracking.base);
+    if (errorsPerMonth > 50000) {
+      const over = errorsPerMonth - 50000;
+      // Use first applicable tier
+      const tier = PRICING.errorTracking.tiers.find(t => errorsPerMonth <= t.max) || PRICING.errorTracking.tiers[PRICING.errorTracking.tiers.length - 1];
+      c.errorTracking += (over / 1000) * price(tier);
+    }
+  } else c.errorTracking = 0;
+
+  if (chk('dd-csiem')) {
+    // SIEM indexes security-relevant log events (~10% of total log events)
+    const siemEvents = dims.logEventsPerMonth * 0.10;
+    dims._siemEvents = siemEvents;
+    c.csiem = (siemEvents / 1e6) * price(PRICING.csiem.perMEvents);
+  } else c.csiem = 0;
+
+  if (chk('dd-civis')) {
+    const committers = val('dd-civis-committers') || 0;
+    dims._committers = committers;
+    c.civis = committers * price(PRICING.ciVisibility.perCommitter);
+  } else c.civis = 0;
+
+  if (chk('dd-incidents')) {
+    const seats = val('dd-incidents-seats') || 0;
+    dims._incidentSeats = seats;
+    c.incidents = seats * price(PRICING.incidents.perSeat);
+  } else c.incidents = 0;
+
+  if (chk('dd-usm')) {
+    c.usm = dims.hosts * price(PRICING.usm.perHost);
+  } else c.usm = 0;
+
   // Apply discount
   let total = 0;
   for (const k in c) { c[k] *= (1 - discount); total += c[k]; }
@@ -613,7 +659,6 @@ function calculateOnDemandTotal() {
     const ret = $('dd-logs-ret').value;
     t += dims.logGBPerMonth * PRICING.logs.ingestionPerGB + (dims.logEventsPerMonth / 1e6) * PRICING.logs.indexing[ret].onDemand;
   }
-  if (chk('dd-containers')) t += dims.containerOverage * PRICING.containers.onDemandMonthly;
   if (chk('dd-metrics')) t += Math.ceil(dims.metricOverage / 100) * PRICING.customMetrics.per100;
   if (chk('dd-synthetics')) {
     const apiRuns = dims.httpServices * 2 * (1440/5) * 3 * 30;
@@ -629,6 +674,18 @@ function calculateOnDemandTotal() {
   if (chk('dd-dbm')) t += dims.dbHosts * PRICING.dbm.perHost.onDemand;
   if (chk('dd-network')) t += dims.hosts * PRICING.network.cloudPerHost.onDemand;
   if (chk('dd-security')) t += dims.hosts * PRICING.security[$('dd-security-tier').value].onDemand;
+  if (chk('dd-errors')) {
+    t += PRICING.errorTracking.base.onDemand;
+    const errMo = dims._errorsPerMonth || 0;
+    if (errMo > 50000) {
+      const tier = PRICING.errorTracking.tiers.find(tr => errMo <= tr.max) || PRICING.errorTracking.tiers[PRICING.errorTracking.tiers.length - 1];
+      t += ((errMo - 50000) / 1000) * tier.onDemand;
+    }
+  }
+  if (chk('dd-csiem')) t += ((dims._siemEvents || 0) / 1e6) * PRICING.csiem.perMEvents.onDemand;
+  if (chk('dd-civis')) t += (val('dd-civis-committers') || 0) * PRICING.ciVisibility.perCommitter.onDemand;
+  if (chk('dd-incidents')) t += (val('dd-incidents-seats') || 0) * PRICING.incidents.perSeat.onDemand;
+  if (chk('dd-usm')) t += dims.hosts * PRICING.usm.perHost.onDemand;
   return t * (1 - discount);
 }
 
@@ -666,8 +723,6 @@ function recalculate() {
 
   // Infra summary
   $('sb-hosts').textContent = dims.hosts;
-  $('sb-containers').textContent = dims.containers + ' (allot: ' + dims.containerAllotment + ')';
-  $('sb-container-over').textContent = dims.containerOverage;
   $('sb-logs').textContent = dims.logGBPerDay.toFixed(1) + ' GB/day';
   $('sb-events').textContent = fmtK(Math.round(dims.logEventsPerMonth)) + '/mo';
   $('sb-metrics').textContent = fmtK(dims.customMetrics);
@@ -738,70 +793,261 @@ function updateBreakdownChart() {
 function updateDimCards() {
   if (!dims) return;
   const tier = $('dd-infra-tier').value;
+  const apmTier = $('dd-apm-tier').value;
   const ret = $('dd-logs-ret').value;
+  const bl = billingType === 'annual' ? 'Annual' : 'On-Demand';
+  const discount = val('discount') / 100;
 
   let html = '';
 
   // Infrastructure
-  let teamDetail = dims.teamBreakdown.map(t =>
-    `<span style="color:${t.color}">${t.name}</span>: ${t.nodes} × ${t.nodeType}`
-  ).join('<br>');
-  html += dimCard('Infrastructure Hosts', dims.hosts, 'hosts', teamDetail,
-    chk('dd-infra') ? fmt(costs.infra) + '/mo' : 'disabled');
-
-  // Containers
-  let contDetail = dims.teamBreakdown.map(t =>
-    `<span style="color:${t.color}">${t.name}</span>: ${t.containers} containers (${t.pods} pods, ${t.utilPct}% node capacity)`
-  ).join('<br>');
-  contDetail += `<br>Allotment: ${dims.containerAllotment} (${PRICING.infrastructure.includedContainers[tier]}/host)`;
-  html += dimCard('Containers', dims.containers, 'total', contDetail,
-    chk('dd-containers') ? fmt(costs.containers) + '/mo (overage: ' + dims.containerOverage + ')' : 'disabled');
-
-  // Logs
-  let logDetail = '';
-  const httpDetails = dims.serviceDetails.filter(s => s.type === 'http');
-  httpDetails.sort((a,b) => b.logGB - a.logGB);
-  for (const s of httpDetails.slice(0, 5)) {
-    logDetail += `${s.name}: ${s.logGB.toFixed(1)} GB/day (${fmtK(Math.round(s.logEvents))} events)<br>`;
+  if (chk('dd-infra')) {
+    const unitP = price(PRICING.infrastructure[tier]);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Tier</td><td>${tier === 'enterprise' ? 'Enterprise' : 'Pro'} (${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${unitP}/host/mo</td></tr>`;
+    bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += dims.teamBreakdown.map(t => `<span style="color:${t.color}">${t.name}</span>: ${t.nodes} × ${t.nodeType}`).join(' · ');
+    bd += `<div class="ps-note">Billing: 99th percentile of hourly host count. Includes ${PRICING.infrastructure.includedMetrics[tier]} custom metrics + ${PRICING.infrastructure.includedContainers[tier]} containers per host.</div>`;
+    html += dimCard('Infrastructure Monitoring', fmt(costs.infra) + '/mo', bd);
   }
-  if (httpDetails.length > 5) logDetail += `...and ${httpDetails.length - 5} more services`;
-  logDetail += `<br><strong>Ingestion</strong>: ${dims.logGBPerMonth.toFixed(0)} GB × $0.10 = ${fmt(dims.logGBPerMonth * 0.10)}`;
-  logDetail += `<br><strong>Indexing</strong>: ${fmtK(Math.round(dims.logEventsPerMonth))} events × $${price(PRICING.logs.indexing[ret]).toFixed(2)}/M = ${fmt(dims.logEventsPerMonth / 1e6 * price(PRICING.logs.indexing[ret]))}`;
-  html += dimCard('Log Management', dims.logGBPerDay.toFixed(1), 'GB/day', logDetail,
-    chk('dd-logs') ? fmt(costs.logs) + '/mo' : 'disabled');
-
-  // Custom Metrics
-  let metDetail = '';
-  const metDetails = dims.serviceDetails.filter(s => s.metrics > 0).sort((a,b) => b.metrics - a.metrics);
-  for (const s of metDetails.slice(0, 5)) {
-    metDetail += `${s.name}: ${fmtK(s.metrics)} metrics<br>`;
-  }
-  metDetail += `<br>Allotment: ${fmtK(dims.metricAllotment)} (${PRICING.infrastructure.includedMetrics[tier]}/host)`;
-  metDetail += `<br>Overage: ${fmtK(dims.metricOverage)} × $0.05 = ${fmt(dims.metricOverage * 0.05)}`;
-  html += dimCard('Custom Metrics', fmtK(dims.customMetrics), 'total', metDetail,
-    chk('dd-metrics') ? fmt(costs.metrics) + '/mo' : 'disabled');
 
   // APM
-  html += dimCard('APM', dims.hosts, 'traced hosts', 'APM priced per K8s node. Includes 150 GB span ingestion + 1M indexed spans per host.',
-    chk('dd-apm') ? fmt(costs.apm) + '/mo' : 'disabled');
+  if (chk('dd-apm')) {
+    const unitP = price(PRICING.apm[apmTier]);
+    const tierLabel = {base:'APM', pro:'APM Pro (+Data Streams)', enterprise:'APM Enterprise (+Profiler)'}[apmTier];
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Tier</td><td>${tierLabel} (${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${unitP}/host/mo</td></tr>`;
+    bd += `<tr><td>Traced hosts</td><td>${dims.hosts} (= K8s nodes)</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Includes per host: 150 GB span ingestion + 1M indexed spans. Overages: $0.10/GB ingested, $${price(PRICING.logs.indexing[ret]).toFixed(2)}/1M indexed (${ret}-day). Priced per K8s node, not per pod.</div>`;
+    html += dimCard('APM', fmt(costs.apm) + '/mo', bd);
+  }
 
-  // DB Monitoring
-  html += dimCard('Database Monitoring', dims.dbHosts, 'db hosts',
-    dims.teamBreakdown.map(t => {
-      const dbs = (model.teams[dims.teamBreakdown.indexOf(t)]?.services || []).filter(s => s.type === 'database' || s.type === 'cache');
+  // Logs
+  if (chk('dd-logs')) {
+    const idxP = price(PRICING.logs.indexing[ret]);
+    const ingCost = dims.logGBPerMonth * PRICING.logs.ingestionPerGB;
+    const idxCost = (dims.logEventsPerMonth / 1e6) * idxP;
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">Ingestion (all retention tiers)</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$0.10/GB</td></tr>`;
+    bd += `<tr><td>Volume</td><td>${dims.logGBPerMonth.toFixed(0)} GB/mo (${dims.logGBPerDay.toFixed(1)} GB/day)</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.logGBPerMonth.toFixed(0)} GB × $0.10</td><td><strong>${fmt(ingCost)}/mo</strong></td></tr>`;
+    bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">Indexing (${ret}-day retention, ${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${idxP.toFixed(2)}/1M events</td></tr>`;
+    bd += `<tr><td>Volume</td><td>${fmtK(Math.round(dims.logEventsPerMonth))} events/mo</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${(dims.logEventsPerMonth / 1e6).toFixed(1)}M × $${idxP.toFixed(2)}</td><td><strong>${fmt(idxCost)}/mo</strong></td></tr>`;
+    bd += `<tr class="ps-total"><td>Total Log Cost</td><td><strong>${fmt(ingCost + idxCost)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    // Top contributors
+    const httpDets = dims.serviceDetails.filter(s => s.type === 'http').sort((a,b) => b.logGB - a.logGB);
+    bd += '<div class="ps-contrib">Top contributors: ' + httpDets.slice(0,4).map(s => `${s.name} (${s.logGB.toFixed(1)} GB/d)`).join(', ') + '</div>';
+    bd += `<div class="ps-note">Dual billing: you pay BOTH ingestion (per GB) and indexing (per million events). Retention options: 3d ($1.06), 7d ($1.27), 15d ($1.70), 30d ($2.50) per 1M events (annual).</div>`;
+    html += dimCard('Log Management', fmt(costs.logs) + '/mo', bd);
+  }
+
+  // Custom Metrics
+  if (chk('dd-metrics')) {
+    const allotPerHost = PRICING.infrastructure.includedMetrics[tier];
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Total custom metrics</td><td>${fmtK(dims.customMetrics)}</td></tr>`;
+    bd += `<tr><td>Included allotment</td><td>${fmtK(dims.metricAllotment)} (${allotPerHost}/host × ${dims.hosts} hosts)</td></tr>`;
+    bd += `<tr><td>Overage</td><td>${fmtK(dims.metricOverage)}</td></tr>`;
+    bd += `<tr><td>Unit price (overage)</td><td>$5.00 per 100 metrics/mo</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${Math.ceil(dims.metricOverage/100)} × 100 metrics × $5.00</td><td><strong>${fmt(Math.ceil(dims.metricOverage/100)*5)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    const metDets = dims.serviceDetails.filter(s => s.metrics > 0).sort((a,b) => b.metrics - a.metrics);
+    bd += '<div class="ps-contrib">Top contributors: ' + metDets.slice(0,4).map(s => `${s.name} (${fmtK(s.metrics)})`).join(', ') + '</div>';
+    bd += `<div class="ps-note">Custom metric = unique (name + tag values). High-cardinality tags are multiplicative. All OTel/Prometheus metrics count as custom. DISTRIBUTION type generates 5 series per tag combo (10 with percentiles).</div>`;
+    html += dimCard('Custom Metrics', fmt(costs.metrics) + '/mo', bd);
+  }
+
+  // Synthetics
+  if (chk('dd-synthetics')) {
+    const apiEndpoints = dims.httpServices * 2;
+    const apiRuns = apiEndpoints * (1440/5) * 3 * 30;
+    const browserRuns = 2 * (1440/15) * 2 * 30;
+    const apiP = price(PRICING.synthetics.apiPer10K);
+    const brwP = price(PRICING.synthetics.browserPer1K);
+    const apiCost = (apiRuns/10000) * apiP;
+    const brwCost = (browserRuns/1000) * brwP;
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">API Tests (${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${apiP.toFixed(2)} per 10K test runs</td></tr>`;
+    bd += `<tr><td>Config</td><td>${apiEndpoints} endpoints × every 5 min × 3 locations × 30 days</td></tr>`;
+    bd += `<tr><td>Monthly runs</td><td>${fmtK(apiRuns)}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${(apiRuns/10000).toFixed(1)} × $${apiP.toFixed(2)}</td><td><strong>${fmt(apiCost)}/mo</strong></td></tr>`;
+    bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">Browser Tests (${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${brwP.toFixed(2)} per 1K test runs</td></tr>`;
+    bd += `<tr><td>Config</td><td>2 flows × every 15 min × 2 locations × 30 days</td></tr>`;
+    bd += `<tr><td>Monthly runs</td><td>${fmtK(browserRuns)}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${(browserRuns/1000).toFixed(1)} × $${brwP.toFixed(2)}</td><td><strong>${fmt(brwCost)}/mo</strong></td></tr>`;
+    bd += `<tr class="ps-total"><td>Total Synthetics</td><td><strong>${fmt(apiCost+brwCost)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Browser tests are 24x more expensive per run than API tests. Cost multiplied by frequency × locations. Mobile: $50/100 runs.</div>`;
+    html += dimCard('Synthetic Monitoring', fmt(costs.synthetics) + '/mo', bd);
+  }
+
+  // RUM
+  if (chk('dd-rum')) {
+    const dau = val('dd-rum-dau');
+    const spd = val('dd-rum-spd') || 1.2;
+    const replayPct = val('dd-rum-replay') || 0;
+    const sessions = dau * spd * 30;
+    const sessP = price(PRICING.rum.sessionsPer1K);
+    const repP = price(PRICING.rum.replayPer1K);
+    const sessCost = (sessions/1000) * sessP;
+    const repSessions = sessions * replayPct / 100;
+    const repCost = (repSessions/1000) * repP;
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">Product Analytics (${bl})</td></tr>`;
+    bd += `<tr><td>Unit price</td><td>$${sessP.toFixed(2)} per 1K sessions</td></tr>`;
+    bd += `<tr><td>DAU</td><td>${fmtK(dau)} × ${spd} sessions/user × 30 days</td></tr>`;
+    bd += `<tr><td>Monthly sessions</td><td>${fmtK(Math.round(sessions))}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${(sessions/1000).toFixed(1)}K × $${sessP.toFixed(2)}</td><td><strong>${fmt(sessCost)}/mo</strong></td></tr>`;
+    if (replayPct > 0) {
+      bd += `<tr><td colspan="2" style="font-weight:600;padding-top:4px">Session Replay (${replayPct}% sampled)</td></tr>`;
+      bd += `<tr><td>Unit price</td><td>$${repP.toFixed(2)} per 1K replays</td></tr>`;
+      bd += `<tr><td>Replays</td><td>${fmtK(Math.round(repSessions))}/mo</td></tr>`;
+      bd += `<tr class="ps-calc"><td>${(repSessions/1000).toFixed(1)}K × $${repP.toFixed(2)}</td><td><strong>${fmt(repCost)}/mo</strong></td></tr>`;
+    }
+    bd += `<tr class="ps-total"><td>Total RUM</td><td><strong>${fmt(sessCost+repCost)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Session = user visit, expires after 15 min idle (4h hard cap). SPA routing does NOT create new sessions. Also available: RUM Measure ($0.15/1K) and RUM Investigate ($3.00/1K filtered).</div>`;
+    html += dimCard('Real User Monitoring', fmt(costs.rum) + '/mo', bd);
+  }
+
+  // Database Monitoring
+  if (chk('dd-dbm')) {
+    const unitP = price(PRICING.dbm.perHost);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Unit price (${bl})</td><td>$${unitP}/host/mo</td></tr>`;
+    bd += `<tr><td>DB hosts</td><td>${dims.dbHosts}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.dbHosts} hosts × $${unitP}</td><td><strong>${fmt(dims.dbHosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += dims.teamBreakdown.map((t, i) => {
+      const dbs = (model.teams[i]?.services || []).filter(s => s.type === 'database' || s.type === 'cache');
       return dbs.length > 0 ? `<span style="color:${t.color}">${t.name}</span>: ${dbs.map(d => d.name + ' (' + (d.instances||1) + ')').join(', ')}` : '';
-    }).filter(Boolean).join('<br>'),
-    chk('dd-dbm') ? fmt(costs.dbm) + '/mo' : 'disabled');
+    }).filter(Boolean).join(' · ');
+    html += dimCard('Database Monitoring', fmt(costs.dbm) + '/mo', bd);
+  }
+
+  // Network Monitoring
+  if (chk('dd-network')) {
+    const unitP = price(PRICING.network.cloudPerHost);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Cloud Network Mon (${bl})</td><td>$${unitP.toFixed(2)}/host/mo</td></tr>`;
+    bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP.toFixed(2)}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Also available: Network Device Mon ($7/device), Wireless AP ($4/device), NetFlow ($0.60-$0.85/1M flows by retention).</div>`;
+    html += dimCard('Network Monitoring', fmt(costs.network) + '/mo', bd);
+  }
+
+  // Security
+  if (chk('dd-security')) {
+    const secTier = $('dd-security-tier').value;
+    const unitP = price(PRICING.security[secTier]);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>CSM ${secTier === 'enterprise' ? 'Enterprise' : 'Pro'} (${bl})</td><td>$${unitP}/host/mo</td></tr>`;
+    bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Also: Workload Protection ($15/host), App & API Protection ($31/host), Cloud SIEM ($5/1M events). DevSecOps bundles: Pro $22/host, Ent $34/host (includes Infra + CSM).</div>`;
+    html += dimCard('Cloud Security (CSM)', fmt(costs.security) + '/mo', bd);
+  }
+
+  // Error Tracking
+  if (chk('dd-errors')) {
+    const errMo = dims._errorsPerMonth || 0;
+    const baseP = price(PRICING.errorTracking.base);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Base (first 50K errors)</td><td>$${baseP}/mo flat</td></tr>`;
+    bd += `<tr><td>Estimated errors</td><td>${fmtK(Math.round(errMo))}/mo (~2% of requests)</td></tr>`;
+    if (errMo > 50000) {
+      const over = errMo - 50000;
+      const tier = PRICING.errorTracking.tiers.find(tr => errMo <= tr.max) || PRICING.errorTracking.tiers[PRICING.errorTracking.tiers.length-1];
+      const tierP = price(tier);
+      bd += `<tr><td>Overage rate</td><td>$${tierP.toFixed(2)}/1K errors</td></tr>`;
+      bd += `<tr class="ps-calc"><td>$${baseP} + ${(over/1000).toFixed(1)}K × $${tierP.toFixed(2)}</td><td><strong>${fmt(costs.errorTracking)}/mo</strong></td></tr>`;
+    } else {
+      bd += `<tr class="ps-calc"><td>Flat fee (under 50K)</td><td><strong>${fmt(baseP)}/mo</strong></td></tr>`;
+    }
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Volume-tiered: 50-100K ($0.25/1K), 100-500K ($0.21/1K), 500K-10M ($0.17/1K), 10-20M ($0.12/1K), 20M+ ($0.10/1K). Annual pricing shown.</div>`;
+    html += dimCard('Error Tracking', fmt(costs.errorTracking) + '/mo', bd);
+  }
+
+  // Cloud SIEM
+  if (chk('dd-csiem')) {
+    const siemEv = dims._siemEvents || 0;
+    const unitP = price(PRICING.csiem.perMEvents);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Unit price (${bl})</td><td>$${unitP.toFixed(2)} per 1M events</td></tr>`;
+    bd += `<tr><td>Security events</td><td>${fmtK(Math.round(siemEv))}/mo (~10% of log events)</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${(siemEv/1e6).toFixed(1)}M × $${unitP.toFixed(2)}</td><td><strong>${fmt((siemEv/1e6)*unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    html += dimCard('Cloud SIEM', fmt(costs.csiem) + '/mo', bd);
+  }
+
+  // CI Visibility
+  if (chk('dd-civis')) {
+    const committers = val('dd-civis-committers') || 0;
+    const unitP = price(PRICING.ciVisibility.perCommitter);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>Pipeline Visibility (${bl})</td><td>$${unitP}/committer/mo</td></tr>`;
+    bd += `<tr><td>Committers</td><td>${committers}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${committers} × $${unitP}</td><td><strong>${fmt(committers * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Also available: Test Optimization ($20/committer), Code Coverage ($8/committer).</div>`;
+    html += dimCard('CI Visibility', fmt(costs.civis) + '/mo', bd);
+  }
+
+  // Incident Management
+  if (chk('dd-incidents')) {
+    const seats = val('dd-incidents-seats') || 0;
+    const unitP = price(PRICING.incidents.perSeat);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>On-Call (${bl})</td><td>$${unitP}/seat/mo</td></tr>`;
+    bd += `<tr><td>Seats</td><td>${seats}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${seats} × $${unitP}</td><td><strong>${fmt(seats * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Also: Incident Management ($30/seat), Incident Response ($40/seat), Workflow Automation ($10/100 executions).</div>`;
+    html += dimCard('Incident Management', fmt(costs.incidents) + '/mo', bd);
+  }
+
+  // Universal Service Monitoring
+  if (chk('dd-usm')) {
+    const unitP = price(PRICING.usm.perHost);
+    let bd = `<table class="ps"><thead><tr><th>Rate Card</th><th></th></tr></thead><tbody>`;
+    bd += `<tr><td>USM (${bl})</td><td>$${unitP}/host/mo</td></tr>`;
+    bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
+    bd += `<tr class="ps-calc"><td>${dims.hosts} × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
+    bd += `</tbody></table>`;
+    bd += `<div class="ps-note">Auto-discovers services via eBPF without code changes. Complements APM for uninstrumented services.</div>`;
+    html += dimCard('Universal Service Monitoring', fmt(costs.usm) + '/mo', bd);
+  }
+
+  if (discount > 0) {
+    html += `<div class="dim-card" style="background:var(--accent-light);border-color:var(--accent)">
+      <h4>Negotiated Discount Applied</h4>
+      <div class="dim-breakdown">All prices above are pre-discount. A <strong>${(discount*100).toFixed(0)}%</strong> discount is applied to the total.<br>
+      Enterprise contracts typically negotiate 15-40% off list pricing.</div>
+    </div>`;
+  }
 
   $('dimGrid').innerHTML = html;
 }
 
-function dimCard(title, value, unit, breakdown, costStr) {
+function dimCard(title, costStr, breakdown) {
   return `<div class="dim-card">
-    <h4>${title}</h4>
-    <div class="dim-main"><span style="font-size:20px;font-weight:700">${value}</span><span>${unit}</span></div>
+    <div class="dim-header"><h4>${title}</h4><span class="dim-cost">${costStr}</span></div>
     <div class="dim-breakdown">${breakdown}</div>
-    <div class="dim-cost">${costStr}</div>
   </div>`;
 }
 
@@ -1085,6 +1331,12 @@ function hwmRow(l, v) { return `<div class="hwm-row"><span>${l}</span><span>${v}
 function toggleRumDetail() {
   $('rum-detail').style.display = chk('dd-rum') ? 'flex' : 'none';
 }
+function toggleCivisDetail() {
+  $('civis-detail').style.display = chk('dd-civis') ? 'flex' : 'none';
+}
+function toggleIncidentsDetail() {
+  $('incidents-detail').style.display = chk('dd-incidents') ? 'flex' : 'none';
+}
 
 // ============================================================
 // TABS
@@ -1109,38 +1361,50 @@ function loadPreset(name) {
   if (!yaml) return;
   if (loadYaml(yaml)) {
     // Set sensible sidebar defaults per preset
+    // Reset all new product checkboxes
+    ['dd-errors','dd-csiem','dd-civis','dd-incidents','dd-usm'].forEach(id => { if ($(id)) $(id).checked = false; });
+
     if (name === 'startup') {
       $('dd-infra-tier').value = 'pro';
       $('dd-apm-tier').value = 'base';
       $('dd-logs-ret').value = '7';
       $('dd-infra').checked = true; $('dd-apm').checked = true; $('dd-logs').checked = true;
-      $('dd-containers').checked = true; $('dd-metrics').checked = true;
+      $('dd-metrics').checked = true;
       $('dd-synthetics').checked = false; $('dd-rum').checked = false;
       $('dd-dbm').checked = true; $('dd-network').checked = false; $('dd-security').checked = false;
       $('dd-rum-dau').value = 0; $('discount').value = 0;
+      $('dd-civis-committers').value = 0; $('dd-incidents-seats').value = 0;
     } else if (name === 'midmarket') {
       $('dd-infra-tier').value = 'enterprise';
       $('dd-apm-tier').value = 'enterprise';
       $('dd-logs-ret').value = '15';
       $('dd-infra').checked = true; $('dd-apm').checked = true; $('dd-logs').checked = true;
-      $('dd-containers').checked = true; $('dd-metrics').checked = true;
+      $('dd-metrics').checked = true;
       $('dd-synthetics').checked = true; $('dd-rum').checked = true;
       $('dd-dbm').checked = true; $('dd-network').checked = true; $('dd-security').checked = false;
+      $('dd-errors').checked = true;
       $('dd-rum-dau').value = 10000; $('dd-rum-spd').value = 1.2; $('dd-rum-replay').value = 10;
+      $('dd-civis-committers').value = 0; $('dd-incidents-seats').value = 0;
       $('discount').value = 15;
     } else if (name === 'enterprise') {
       $('dd-infra-tier').value = 'enterprise';
       $('dd-apm-tier').value = 'enterprise';
       $('dd-logs-ret').value = '30';
       $('dd-infra').checked = true; $('dd-apm').checked = true; $('dd-logs').checked = true;
-      $('dd-containers').checked = true; $('dd-metrics').checked = true;
+      $('dd-metrics').checked = true;
       $('dd-synthetics').checked = true; $('dd-rum').checked = true;
       $('dd-dbm').checked = true; $('dd-network').checked = true; $('dd-security').checked = true;
       $('dd-security-tier').value = 'enterprise';
+      $('dd-errors').checked = true; $('dd-csiem').checked = true;
+      $('dd-civis').checked = true; $('dd-civis-committers').value = 30;
+      $('dd-incidents').checked = true; $('dd-incidents-seats').value = 10;
+      $('dd-usm').checked = true;
       $('dd-rum-dau').value = 50000; $('dd-rum-spd').value = 1.3; $('dd-rum-replay').value = 10;
       $('discount').value = 25;
     }
     toggleRumDetail();
+    toggleCivisDetail();
+    toggleIncidentsDetail();
     $('trafficMultiplier').value = 1;
     recalculate();
     renderTopology();

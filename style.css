@@ -204,16 +204,23 @@ h1 { font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowra
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 12px;
 }
-.dim-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--accent); }
-.dim-main { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
-.dim-main input {
-  width: 100px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px;
-  font-size: 16px; font-weight: 700; font-family: inherit;
-}
-.dim-main input:focus { outline: none; border-color: var(--accent); }
-.dim-main span { font-size: 12px; color: var(--muted); }
-.dim-breakdown { font-size: 11px; color: var(--muted); line-height: 1.6; padding: 6px 8px; background: var(--bg); border-radius: 4px; }
-.dim-cost { font-size: 13px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+.dim-card h4 { font-size: 13px; font-weight: 600; color: var(--accent); margin: 0; }
+.dim-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.dim-cost { font-size: 15px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.dim-breakdown { font-size: 11px; color: var(--muted); line-height: 1.6; }
+
+/* Price-sheet tables inside dim cards */
+.ps { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; background: var(--bg); border-radius: 4px; }
+.ps thead th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.ps thead th:last-child { text-align: right; }
+.ps td { padding: 2px 8px; border-bottom: 1px solid #eee; }
+.ps td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.ps tr.ps-calc { background: var(--accent-light); }
+.ps tr.ps-calc td { font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--accent); border-top: 1px solid var(--accent); }
+.ps tr.ps-total td { font-weight: 700; padding: 5px 8px; border-top: 2px solid var(--border); font-size: 12px; }
+
+.ps-note { font-size: 10px; color: var(--muted); margin-top: 6px; padding: 5px 8px; background: #f0f1f3; border-radius: 3px; line-height: 1.5; border-left: 3px solid var(--accent); }
+.ps-contrib { font-size: 10px; color: var(--muted); margin: 4px 0; }
 
 /* Analysis */
 .analysis-section { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
