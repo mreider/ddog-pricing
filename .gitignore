@@ -1,0 +1,9 @@
+.claude/
+gcp-key.json
+*.key
+*.pem
+.env
+.env.*
+credentials.*
+secrets.*
+datadog-pricing-reference.md
