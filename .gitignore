@@ -1,5 +1,4 @@
 .claude/
-gcp-key.json
 *.key
 *.pem
 .env
