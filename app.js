@@ -810,7 +810,7 @@ function updateDimCards() {
     bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
     bd += dims.teamBreakdown.map(t => `<span style="color:${t.color}">${t.name}</span>: ${t.nodes} × ${t.nodeType}`).join(' · ');
-    bd += `<div class="ps-note">Billing: 99th percentile of hourly host count. Includes ${PRICING.infrastructure.includedMetrics[tier]} custom metrics + ${PRICING.infrastructure.includedContainers[tier]} containers per host.</div>`;
+    bd += `<div class="ps-note"><strong>How hosts are counted:</strong> Datadog measures your host count every hour and bills on the 99th percentile (top 1% of hours forgiven — brief autoscaling spikes won't inflate your bill, but sustained scaling will). A "host" = one K8s node, VM, or EC2 instance. Each host includes ${PRICING.infrastructure.includedMetrics[tier]} custom metrics and ${PRICING.infrastructure.includedContainers[tier]} containers at no extra charge. Volume discounts available at 500+ hosts.</div>`;
     html += dimCard('Infrastructure Monitoring', fmt(costs.infra) + '/mo', bd);
   }
 
@@ -824,7 +824,7 @@ function updateDimCards() {
     bd += `<tr><td>Traced hosts</td><td>${dims.hosts} (= K8s nodes)</td></tr>`;
     bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Includes per host: 150 GB span ingestion + 1M indexed spans. Overages: $0.10/GB ingested, $${price(PRICING.logs.indexing[ret]).toFixed(2)}/1M indexed (${ret}-day). Priced per K8s node, not per pod.</div>`;
+    bd += `<div class="ps-note"><strong>How APM is billed:</strong> Priced per K8s node, not per pod — so 10 nodes running 200 pods = 10 APM hosts, not 200. Each host includes 150 GB of span ingestion and 1M indexed spans per month. If you exceed those, overages are $0.10/GB ingested and $${price(PRICING.logs.indexing[ret]).toFixed(2)}/1M indexed spans (${ret}-day retention). APM Pro adds Data Streams Monitoring; Enterprise adds Continuous Profiler.</div>`;
     html += dimCard('APM', fmt(costs.apm) + '/mo', bd);
   }
 
@@ -847,7 +847,7 @@ function updateDimCards() {
     // Top contributors
     const httpDets = dims.serviceDetails.filter(s => s.type === 'http').sort((a,b) => b.logGB - a.logGB);
     bd += '<div class="ps-contrib">Top contributors: ' + httpDets.slice(0,4).map(s => `${s.name} (${s.logGB.toFixed(1)} GB/d)`).join(', ') + '</div>';
-    bd += `<div class="ps-note">Dual billing: you pay BOTH ingestion (per GB) and indexing (per million events). Retention options: 3d ($1.06), 7d ($1.27), 15d ($1.70), 30d ($2.50) per 1M events (annual).</div>`;
+    bd += `<div class="ps-note"><strong>How log billing works:</strong> Logs have two separate charges — you pay for ingestion (raw bytes entering Datadog, always $0.10/GB) AND indexing (making events searchable, priced per million events by retention period). Indexing is typically 8-10x more expensive than ingestion. Longer retention = higher indexing cost: 3d ($1.06/M), 7d ($1.27/M), 15d ($1.70/M), 30d ($2.50/M). Flex Logs offer cheaper archival storage at $0.05/M for infrequent queries.</div>`;
     html += dimCard('Log Management', fmt(costs.logs) + '/mo', bd);
   }
 
@@ -863,7 +863,7 @@ function updateDimCards() {
     bd += `</tbody></table>`;
     const metDets = dims.serviceDetails.filter(s => s.metrics > 0).sort((a,b) => b.metrics - a.metrics);
     bd += '<div class="ps-contrib">Top contributors: ' + metDets.slice(0,4).map(s => `${s.name} (${fmtK(s.metrics)})`).join(', ') + '</div>';
-    bd += `<div class="ps-note">Custom metric = unique (name + tag values). High-cardinality tags are multiplicative. All OTel/Prometheus metrics count as custom. DISTRIBUTION type generates 5 series per tag combo (10 with percentiles).</div>`;
+    bd += `<div class="ps-note"><strong>How custom metrics are counted:</strong> Each unique combination of metric name + tag values = one custom metric. Tags are multiplicative — a metric with tags for 10 endpoints × 5 status codes × 3 environments = 150 custom metrics from a single metric name. A high-cardinality tag like customer_id (1,000 values) can multiply costs by 1,000x. All OpenTelemetry and Prometheus metrics count as custom. DISTRIBUTION metrics generate 5 time series per tag combo (10 if you enable percentiles).</div>`;
     html += dimCard('Custom Metrics', fmt(costs.metrics) + '/mo', bd);
   }
 
@@ -889,7 +889,7 @@ function updateDimCards() {
     bd += `<tr class="ps-calc"><td>${(browserRuns/1000).toFixed(1)} × $${brwP.toFixed(2)}</td><td><strong>${fmt(brwCost)}/mo</strong></td></tr>`;
     bd += `<tr class="ps-total"><td>Total Synthetics</td><td><strong>${fmt(apiCost+brwCost)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Browser tests are 24x more expensive per run than API tests. Cost multiplied by frequency × locations. Mobile: $50/100 runs.</div>`;
+    bd += `<div class="ps-note"><strong>How Synthetics pricing scales:</strong> Total runs = (number of tests) × (checks per day) × (locations) × 30 days. Each location multiplies the run count. Browser tests cost 24x more per run than API tests because they spin up a real browser. Reducing check frequency from 5-min to 15-min cuts costs by ~67%. Mobile app testing is significantly more expensive at $50/100 runs.</div>`;
     html += dimCard('Synthetic Monitoring', fmt(costs.synthetics) + '/mo', bd);
   }
 
@@ -918,7 +918,7 @@ function updateDimCards() {
     }
     bd += `<tr class="ps-total"><td>Total RUM</td><td><strong>${fmt(sessCost+repCost)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Session = user visit, expires after 15 min idle (4h hard cap). SPA routing does NOT create new sessions. Also available: RUM Measure ($0.15/1K) and RUM Investigate ($3.00/1K filtered).</div>`;
+    bd += `<div class="ps-note"><strong>How sessions are counted:</strong> A session starts when a user loads your app and ends after 15 minutes of inactivity (hard cap: 4 hours). In a single-page app, navigating between routes does NOT start a new session — it's all one visit. Typical ratio: ~1.2 sessions per daily active user. Three RUM tiers: Measure ($0.15/1K — basic telemetry), Product Analytics ($0.80/1K — shown above), and Investigate ($3.00/1K — filtered sessions with full replay search).</div>`;
     html += dimCard('Real User Monitoring', fmt(costs.rum) + '/mo', bd);
   }
 
@@ -945,7 +945,7 @@ function updateDimCards() {
     bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
     bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP.toFixed(2)}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Also available: Network Device Mon ($7/device), Wireless AP ($4/device), NetFlow ($0.60-$0.85/1M flows by retention).</div>`;
+    bd += `<div class="ps-note"><strong>What's included:</strong> Cloud Network Monitoring gives you network flow maps between services across hosts. Additional products: Network Device Monitoring ($7/device/mo) for switches/routers via SNMP, Wireless AP Monitoring ($4/device/mo), and NetFlow analysis ($0.60-$0.85/1M flows depending on retention).</div>`;
     html += dimCard('Network Monitoring', fmt(costs.network) + '/mo', bd);
   }
 
@@ -958,7 +958,7 @@ function updateDimCards() {
     bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
     bd += `<tr class="ps-calc"><td>${dims.hosts} hosts × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Also: Workload Protection ($15/host), App & API Protection ($31/host), Cloud SIEM ($5/1M events). DevSecOps bundles: Pro $22/host, Ent $34/host (includes Infra + CSM).</div>`;
+    bd += `<div class="ps-note"><strong>CSM tiers:</strong> Pro ($10/host) covers cloud posture management and misconfig detection. Enterprise ($25/host) adds runtime threat detection. Additional security products: Workload Protection ($15/host), App & API Protection/WAF ($31/host). <strong>Bundle option:</strong> DevSecOps bundles combine Infra + CSM at a discount — Pro $22/host, Enterprise $34/host.</div>`;
     html += dimCard('Cloud Security (CSM)', fmt(costs.security) + '/mo', bd);
   }
 
@@ -979,7 +979,7 @@ function updateDimCards() {
       bd += `<tr class="ps-calc"><td>Flat fee (under 50K)</td><td><strong>${fmt(baseP)}/mo</strong></td></tr>`;
     }
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Volume-tiered: 50-100K ($0.25/1K), 100-500K ($0.21/1K), 500K-10M ($0.17/1K), 10-20M ($0.12/1K), 20M+ ($0.10/1K). Annual pricing shown.</div>`;
+    bd += `<div class="ps-note"><strong>How error tracking works:</strong> First 50K errors/month are a flat fee. Above that, pricing is volume-tiered — the more errors, the cheaper per-unit: 50-100K ($0.25/1K), 100-500K ($0.21/1K), 500K-10M ($0.17/1K), 10M+ ($0.12/1K). Error volume is estimated here at ~2% of total request traffic. Actual rates depend on error rates in your services.</div>`;
     html += dimCard('Error Tracking', fmt(costs.errorTracking) + '/mo', bd);
   }
 
@@ -1004,7 +1004,7 @@ function updateDimCards() {
     bd += `<tr><td>Committers</td><td>${committers}</td></tr>`;
     bd += `<tr class="ps-calc"><td>${committers} × $${unitP}</td><td><strong>${fmt(committers * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Also available: Test Optimization ($20/committer), Code Coverage ($8/committer).</div>`;
+    bd += `<div class="ps-note"><strong>How committers are counted:</strong> A committer is anyone who authored a git commit in the billing period. Pipeline Visibility gives you CI pipeline traces and failure analysis. Additional CI products: Test Optimization ($20/committer — intelligent test selection), Code Coverage ($8/committer).</div>`;
     html += dimCard('CI Visibility', fmt(costs.civis) + '/mo', bd);
   }
 
@@ -1017,7 +1017,7 @@ function updateDimCards() {
     bd += `<tr><td>Seats</td><td>${seats}</td></tr>`;
     bd += `<tr class="ps-calc"><td>${seats} × $${unitP}</td><td><strong>${fmt(seats * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Also: Incident Management ($30/seat), Incident Response ($40/seat), Workflow Automation ($10/100 executions).</div>`;
+    bd += `<div class="ps-note"><strong>Service Management tiers:</strong> On-Call ($20/seat) provides paging and scheduling. Incident Management ($30/seat) adds structured incident workflows. Incident Response ($40/seat) adds postmortems and SLO tracking. Workflow Automation ($10/100 executions) lets you trigger remediation actions from alerts.</div>`;
     html += dimCard('Incident Management', fmt(costs.incidents) + '/mo', bd);
   }
 
@@ -1029,7 +1029,7 @@ function updateDimCards() {
     bd += `<tr><td>Hosts</td><td>${dims.hosts}</td></tr>`;
     bd += `<tr class="ps-calc"><td>${dims.hosts} × $${unitP}</td><td><strong>${fmt(dims.hosts * unitP)}/mo</strong></td></tr>`;
     bd += `</tbody></table>`;
-    bd += `<div class="ps-note">Auto-discovers services via eBPF without code changes. Complements APM for uninstrumented services.</div>`;
+    bd += `<div class="ps-note"><strong>What USM does:</strong> Uses eBPF to automatically discover and map all services communicating over the network — without any code instrumentation or agent configuration. Useful for getting observability on services your team hasn't instrumented with APM yet. Complements (doesn't replace) full APM tracing.</div>`;
     html += dimCard('Universal Service Monitoring', fmt(costs.usm) + '/mo', bd);
   }
 
@@ -1303,24 +1303,38 @@ function updateGrowthChart() {
 
 function updateHWM() {
   const normal = val('hwm-normal'), peak = val('hwm-peak'), hours = val('hwm-hours');
-  const totalH = 730, top1 = Math.ceil(totalH * 0.01);
+  const totalH = 730, top1 = Math.ceil(totalH * 0.01); // ~7 hours
   const forgiven = hours <= top1;
   const billed = forgiven ? normal : peak;
-  const infraPrice = price(PRICING.infrastructure[$('dd-infra-tier').value]);
-  const normalBill = normal * infraPrice, actualBill = billed * infraPrice;
+  const tier = $('dd-infra-tier').value;
+  const infraPrice = price(PRICING.infrastructure[tier]);
+  const normalBill = normal * infraPrice, peakBill = peak * infraPrice, actualBill = billed * infraPrice;
 
-  let h = '';
-  h += hwmRow('Hours/month', totalH);
-  h += hwmRow('Top 1% forgiven', top1 + 'h');
-  h += hwmRow('Peak duration', hours + 'h');
-  h += hwmRow('Peak forgiven?', forgiven ? 'Yes' : 'No');
-  h += hwmRow('Normal bill', fmt(normalBill) + '/mo');
-  h += `<div class="hwm-row highlight"><span>Actual bill (${billed} hosts)</span><span>${fmt(actualBill)}/mo</span></div>`;
-  if (!forgiven) {
-    h += `<div class="hwm-row highlight"><span>Scaling event cost</span><span>+${fmt(actualBill - normalBill)}/mo</span></div>`;
+  let h = '<div class="hwm-explain">';
+  h += `<strong>How it works:</strong> Datadog samples your host count every hour. Over a month that's ~${totalH} measurements. `;
+  h += `They discard the highest ${top1} hours (top 1%) and bill you on the next highest value.`;
+  h += '</div>';
+
+  h += hwmRow('Your normal host count', normal + ' hosts');
+  h += hwmRow('Your peak host count', peak + ' hosts');
+  h += hwmRow('How long the peak lasts', hours + ' hours');
+  h += hwmRow('Forgiveness window (top 1%)', top1 + ' hours');
+
+  if (forgiven) {
+    h += `<div class="hwm-row good"><span>Result: Peak is under ${top1}h — fully forgiven</span><span></span></div>`;
+    h += hwmRow('You are billed for', normal + ' hosts (your normal count)');
+    h += hwmRow('Normal monthly bill', fmt(normalBill) + '/mo');
+    h += `<div class="hwm-row good"><span>You saved ${fmt(peakBill - normalBill)}/mo by keeping the spike short</span><span></span></div>`;
   } else {
-    h += `<div class="hwm-row good"><span>Peak fully forgiven by 99th pctile</span><span></span></div>`;
+    h += `<div class="hwm-row highlight"><span>Result: Peak exceeds ${top1}h — you pay the peak rate for the whole month</span><span></span></div>`;
+    h += hwmRow('Billed host count', peak + ' hosts (not ' + normal + ')');
+    h += hwmRow('Normal bill (without spike)', fmt(normalBill) + '/mo');
+    h += `<div class="hwm-row highlight"><span>Actual bill (with spike)</span><span>${fmt(actualBill)}/mo</span></div>`;
+    h += `<div class="hwm-row highlight"><span>Extra cost from this scaling event</span><span>+${fmt(actualBill - normalBill)}/mo</span></div>`;
+    const breakEvenHours = top1;
+    h += `<div class="hwm-row"><span>To avoid: keep peak under ${breakEvenHours} hours, or pre-purchase committed capacity</span><span></span></div>`;
   }
+
   $('hwmResults').innerHTML = h;
 }
 function hwmRow(l, v) { return `<div class="hwm-row"><span>${l}</span><span>${v}</span></div>`; }

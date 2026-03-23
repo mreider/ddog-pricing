@@ -66,7 +66,7 @@
           </div>
           <div class="analysis-card">
             <h4>High-Water Mark Simulator</h4>
-            <p class="hint">Datadog bills at the 99th percentile hour. See how scaling spikes affect your bill.</p>
+            <p class="hint">Datadog measures your host count every hour (~730 hours/month). At month-end, they throw out the top 1% of hours (~7 hours) and bill you based on the highest remaining hour. So a brief autoscaling spike under 7 hours is forgiven, but anything longer sets your bill for the entire month.</p>
             <div class="input-row">
               <div class="input-group">
                 <label>Normal Hosts</label>

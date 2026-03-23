@@ -238,6 +238,7 @@ h1 { font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowra
 .growth-summary { margin-top: 8px; font-size: 12px; color: var(--muted); padding: 8px; background: var(--bg); border-radius: 5px; }
 
 #hwmResults { margin-top: 10px; padding: 10px; background: var(--bg); border-radius: 5px; }
+.hwm-explain { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); line-height: 1.5; }
 .hwm-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
 .hwm-row.highlight { font-weight: 700; color: var(--red); border-top: 1px solid var(--border); padding-top: 6px; margin-top: 3px; }
 .hwm-row.good { color: var(--green); font-weight: 600; }
